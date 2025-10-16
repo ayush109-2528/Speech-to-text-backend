@@ -24,9 +24,8 @@ requiredEnv.forEach((key) => {
 app.use(cors());
 app.use(express.json());
 
-// Create uploads folder if not exist
-const uploadsDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+// Use /tmp for temp uploads on Vercel
+const uploadsDir = "/tmp";
 
 const upload = multer({ dest: uploadsDir, limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -36,7 +35,7 @@ const mp3OutputPath = path.join(uploadsDir, "final_recording.mp3");
 const supabase = createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const deepgram = createDeepgramClient(process.env.DEEPGRAM_API_KEY);
 
-// Async middleware for error handling
+// Async handler middleware
 function asyncHandler(fn) {
   return function (req, res, next) {
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -47,7 +46,6 @@ async function saveTranscription(req, transcriptionText, audioUrl = null) {
   const userId = req.headers["x-user-id"];
   if (!userId) throw new Error("Missing user_id in request");
 
-  // Use Supabase admin API to get user by ID securely (update if needed)
   const { data, error } = await supabase
     .from("auth.users")
     .select()
@@ -55,24 +53,20 @@ async function saveTranscription(req, transcriptionText, audioUrl = null) {
     .single();
 
   if (error || !data) {
-    // Log but allow saving without user association
     console.warn(`User with ID ${userId} does not exist, saving without association.`);
     return await supabase.from("transcriptions").insert([
-      { transcription: transcriptionText, audio_url: audioUrl, user_id: null }
+      { transcription: transcriptionText, audio_url: audioUrl, user_id: null },
     ]);
   }
 
-  // Save transcription associated with the user
   const { data: insertData, error: insertError } = await supabase.from("transcriptions").insert([
-    { transcription: transcriptionText, audio_url: audioUrl, user_id: userId }
+    { transcription: transcriptionText, audio_url: audioUrl, user_id: userId },
   ]);
 
   if (insertError) throw insertError;
 
   return insertData;
 }
-
-// Routes
 
 app.post(
   "/upload",
@@ -98,9 +92,7 @@ app.post(
       await saveTranscription(req, transcription, null);
 
       res.json({ transcription });
-
     } finally {
-      // Always try to clean uploaded file
       fs.unlink(filePath, (err) => {
         if (err) console.warn("Failed to remove uploaded file:", err);
       });
@@ -152,6 +144,11 @@ app.post(
 
           await saveTranscription(req, transcription);
 
+          // Clean mp3 temp file after response
+          fs.unlink(mp3OutputPath, (err) => {
+            if (err) console.warn("Failed to remove mp3 file:", err);
+          });
+
           res.json({ mp3: "/uploads/final_recording.mp3", transcription });
         } catch (err) {
           console.error("Transcription error:", err);
@@ -169,7 +166,7 @@ app.post(
 app.get(
   "/transcriptions",
   asyncHandler(async (req, res) => {
-    const { data, error } = await supabase.from("transcriptions").select().order('created_at', { ascending: false });
+    const { data, error } = await supabase.from("transcriptions").select().order("created_at", { ascending: false });
     if (error) {
       console.error("Error fetching transcriptions:", error);
       return res.status(500).json({ error: "Failed to fetch transcriptions" });
@@ -193,7 +190,6 @@ app.delete(
 
 app.use("/uploads", express.static(uploadsDir));
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
   res.status(500).json({ error: "Internal Server Error" });
