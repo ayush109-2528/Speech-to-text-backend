@@ -23,7 +23,11 @@ requiredEnv.forEach((key) => {
 
 app.use(cors());
 app.use(express.json());
-
+app.use(cors({
+   origin: ["https://speech-to-text-blue.vercel.app/"],
+   methods: ["POST", "GET"],
+   credentials: true
+ }));
 // Use /tmp for temp uploads on Vercel
 const uploadsDir = "/tmp";
 
